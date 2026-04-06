@@ -1,5 +1,8 @@
 import React, { useEffect, useState, useRef } from "react"
-import { setShowingAccountsModal } from "@pelagus/pelagus-background/redux-slices/ui"
+import {
+  selectIsQiWalletActionBlocked,
+  setShowingAccountsModal,
+} from "@pelagus/pelagus-background/redux-slices/ui"
 import { useHistory } from "react-router-dom"
 import { sendQiTransaction } from "@pelagus/pelagus-background/redux-slices/qiSend"
 import { useTranslation } from "react-i18next"
@@ -21,6 +24,9 @@ const ConfirmTransactionPage = () => {
   const history = useHistory()
   const network = useBackgroundSelector(selectCurrentNetwork)
   const blockExplorerUrl = network.blockExplorerURL
+  const isQiWalletActionBlocked = useBackgroundSelector(
+    selectIsQiWalletActionBlocked
+  )
 
   const { t: confirmationLocales } = useTranslation("translation", {
     keyPrefix: "drawers.transactionConfirmation",
@@ -54,6 +60,13 @@ const ConfirmTransactionPage = () => {
   }, [quaiBalance, senderQuaiAccount, channelExists])
 
   const onSendQiTransaction = async () => {
+    if (isQiWalletActionBlocked) {
+      setErrorMessage("Qi wallet requires reaggregation before sending.")
+      setIsTransactionError(true)
+      setIsOpenConfirmationModal(true)
+      return
+    }
+
     if (!channelExists && isInsufficientQuai) return
 
     // Synchronous check to prevent duplicate submissions from rapid clicks
@@ -123,7 +136,8 @@ const ConfirmTransactionPage = () => {
         <SharedActionButtons
           title={{ confirmTitle: "Send", cancelTitle: "Back" }}
           isConfirmDisabled={
-            !channelExists && (!senderQuaiAccount || isInsufficientQuai)
+            isQiWalletActionBlocked ||
+            (!channelExists && (!senderQuaiAccount || isInsufficientQuai))
           }
           onClick={{
             onConfirm: onSendQiTransaction,

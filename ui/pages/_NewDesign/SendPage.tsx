@@ -1,6 +1,9 @@
 import React, { useEffect, useState } from "react"
 import { useHistory } from "react-router-dom"
-import { selectShowPaymentChannelModal } from "@pelagus/pelagus-background/redux-slices/ui"
+import {
+  selectIsQiWalletActionBlocked,
+  selectShowPaymentChannelModal,
+} from "@pelagus/pelagus-background/redux-slices/ui"
 import { parseQi, Zone } from "quais"
 import { selectCurrentNetwork } from "@pelagus/pelagus-background/redux-slices/selectors"
 import { doesChannelExists } from "@pelagus/pelagus-background/redux-slices/qiSend"
@@ -25,6 +28,9 @@ const SendPage = () => {
   const showPaymentChannelModal = useBackgroundSelector(
     selectShowPaymentChannelModal
   )
+  const isQiWalletActionBlocked = useBackgroundSelector(
+    selectIsQiWalletActionBlocked
+  )
   const [isOpenPaymentChanelModal, setIsOpenPaymentChanelModal] =
     useState(false)
   const [isConfirmLoading, setIsConfirmLoading] = useState(false)
@@ -35,6 +41,11 @@ const SendPage = () => {
   const [isConfirmDisabled, setIsConfirmDisabled] = useState(true)
 
   useEffect(() => {
+    if (isQiWalletActionBlocked) {
+      setIsConfirmDisabled(true)
+      return
+    }
+
     if (
       amount &&
       Number(amount) &&
@@ -49,10 +60,14 @@ const SendPage = () => {
     }
 
     setIsConfirmDisabled(true)
-  }, [amount, receiverPaymentCode, utxoAccountArr])
+  }, [amount, receiverPaymentCode, utxoAccountArr, isQiWalletActionBlocked])
 
   const handleConfirm = async () => {
     setIsConfirmLoading(true)
+    if (isQiWalletActionBlocked) {
+      setIsConfirmLoading(false)
+      return
+    }
     const channelExists = (await dispatch(
       doesChannelExists()
     )) as AsyncThunkFulfillmentType<typeof doesChannelExists>
@@ -70,6 +85,11 @@ const SendPage = () => {
       <main className="sendAsset-wrapper">
         <SharedGoBackPageHeader title="Send Assets" linkTo="/" />
         <SendAsset />
+        {isQiWalletActionBlocked && (
+          <p className="blocked-copy">
+            Qi spending is temporarily blocked until output aggregation finishes.
+          </p>
+        )}
         <SharedActionButtons
           title={{ confirmTitle: "Next", cancelTitle: "Cancel" }}
           isConfirmDisabled={isConfirmDisabled}
@@ -92,6 +112,15 @@ const SendPage = () => {
           height: 100%;
           box-sizing: border-box;
           padding: 16px;
+        }
+        .blocked-copy {
+          margin: 8px 0 16px;
+          padding: 10px 12px;
+          border-radius: 8px;
+          background: var(--secondary-bg);
+          color: var(--attention);
+          font-size: 14px;
+          line-height: 20px;
         }
       `}</style>
     </>

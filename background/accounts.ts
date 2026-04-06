@@ -73,15 +73,6 @@ export type QiWalletBalance = {
   dataSource: "local"
 }
 
-export type QiWalletSyncInfo = {
-  chainID: string
-  blockNumber: number
-  blockHash: string
-  timestamp: number
-  type: "sync" | "scan"
-  version: string
-}
-
 export type QiCoinbaseAddressBalance = {
   address: string
   balance: bigint

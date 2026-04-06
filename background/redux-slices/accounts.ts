@@ -29,7 +29,14 @@ import { convertFixedPoint } from "../lib/fixed-point"
 import { NetworkInterface } from "../constants/networks/networkTypes"
 import { QiWallet } from "../services/keyring/types"
 import { RootState } from "./index"
-import { updateSelectedUtxoAccountBalance, setAggregateQiOutputsInProgress, setAggregationProgress } from "./ui"
+import {
+  updateSelectedUtxoAccountBalance,
+  setAggregateQiOutputsInProgress,
+  setAggregationProgress,
+  setQiWalletAggregationError,
+  setQiWalletAggregationRequired,
+  setQiWalletSyncStatus,
+} from "./ui"
 
 /**
  * The set of available UI account types. These may or may not map 1-to-1 to
@@ -628,14 +635,24 @@ export const aggregateQiOutputs = createBackgroundAsyncThunk(
   async (params: { maxDenominationAggregate: number; maxDenominationOutput: number }, { extra: { main }, dispatch }) => {
     try {
       dispatch(setAggregateQiOutputsInProgress(true))
+      dispatch(setQiWalletSyncStatus("aggregating"))
+      dispatch(setQiWalletAggregationError(null))
       
       const onProgress = (progress: number, step: string, detail?: string) => {
         dispatch(setAggregationProgress({ progress, step, detail }))
       }
       
       const txHash = await main.transactionService.aggregateQi(params.maxDenominationAggregate, params.maxDenominationOutput, onProgress)
+      dispatch(setQiWalletAggregationRequired(false))
       return { txHash }
     } catch (error: any) {
+      dispatch(setQiWalletAggregationRequired(true))
+      dispatch(
+        setQiWalletAggregationError(
+          typeof error === "string" ? error : error?.message || null
+        )
+      )
+      dispatch(setQiWalletSyncStatus("aggregation_failed"))
       return {
         error: {
           message: typeof error === 'string' ? error : error?.message

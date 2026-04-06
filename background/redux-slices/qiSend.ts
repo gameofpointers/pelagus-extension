@@ -80,11 +80,19 @@ export default qiSendSlice.reducer
 export const sendQiTransaction = createBackgroundAsyncThunk(
   "qiSend/sendQiTransaction",
   async (_, { getState, dispatch }) => {
-    const { qiSend } = getState() as RootState
+    const { qiSend, ui } = getState() as RootState
 
     // DEBUG: Log every thunk invocation with timestamp
     const invocationId = Date.now()
     console.log(`[sendQiTransaction] Thunk invoked at ${invocationId}, isSending: ${qiSend.isSending}`)
+
+    if (ui.qiWalletAggregationRequired || ui.aggregateQiOutputsInProgress) {
+      return {
+        error: {
+          message: "Qi wallet requires reaggregation before spending."
+        }
+      }
+    }
 
     // Prevent duplicate submissions
     if (qiSend.isSending) {
@@ -130,7 +138,12 @@ export const sendQiTransaction = createBackgroundAsyncThunk(
 export const doesChannelExists = createBackgroundAsyncThunk(
   "qiSend/checkPaymentChannel",
   async (_, { getState, dispatch }) => {
-    const { qiSend } = getState() as RootState
+    const { qiSend, ui } = getState() as RootState
+
+    if (ui.qiWalletAggregationRequired || ui.aggregateQiOutputsInProgress) {
+      dispatch(setQiChannelExists(false))
+      return false
+    }
 
     const { senderQiAccount, receiverPaymentCode } = qiSend
     const { paymentCode: senderPaymentCode } =

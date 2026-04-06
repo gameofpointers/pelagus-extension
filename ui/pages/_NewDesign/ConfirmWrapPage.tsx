@@ -3,6 +3,7 @@ import { useHistory, useLocation } from "react-router-dom"
 import { useTranslation } from "react-i18next"
 import { useBackgroundSelector } from "../../hooks"
 import { wrapQiHandle, unwrapQiHandle } from "@pelagus/pelagus-background/redux-slices/convertAssets"
+import { selectIsQiWalletActionBlocked } from "@pelagus/pelagus-background/redux-slices/ui"
 import ConfirmWrap from "../../components/_NewDesign/WrapAsset/ConfirmWrap"
 import SharedConfirmationModal from "../../components/Shared/SharedConfirmationModal"
 import SharedButton from "../../components/Shared/SharedButton"
@@ -33,10 +34,20 @@ const ConfirmWrapPage = () => {
   const network = useBackgroundSelector(selectCurrentNetwork)
   const blockExplorerUrl = network.blockExplorerURL
   const isUnwrap = location.pathname === "/unwrap/confirmation"
+  const isQiWalletActionBlocked = useBackgroundSelector(
+    selectIsQiWalletActionBlocked
+  )
 
   const { from, amount, to } = useBackgroundSelector((state) => state.convertAssets)
 
   const handleConfirm = async () => {
+    if (!isUnwrap && from && isUtxoAccountTypeGuard(from) && isQiWalletActionBlocked) {
+      setErrorMessage("Qi wallet requires reaggregation before wrapping.")
+      setIsTransactionError(true)
+      setIsModalOpen(true)
+      return
+    }
+
     if (isUnwrap) {
       // For unwrapping, only need from and amount
       if (!from || !amount || !isAccountTotalTypeGuard(from)) {
@@ -117,7 +128,13 @@ const ConfirmWrapPage = () => {
           type="primary"
           size="large"
           onClick={handleConfirm}
-          isDisabled={isLoading}
+          isDisabled={
+            isLoading ||
+            (!isUnwrap &&
+              !!from &&
+              isUtxoAccountTypeGuard(from) &&
+              isQiWalletActionBlocked)
+          }
           isLoading={isLoading}
           style={{ color: 'white' }}
         >

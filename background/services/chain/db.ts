@@ -5,7 +5,6 @@ import {
   AccountBalance,
   AddressOnNetwork,
   QiCoinbaseAddressBalance,
-  QiWalletSyncInfo,
   QiWalletBalance,
 } from "../../accounts"
 import { NetworkBaseAsset } from "../../networks"
@@ -73,8 +72,6 @@ export class ChainDatabase extends Dexie {
 
   private qiOutpoints!: Dexie.Table<QiOutpoint, [string, string, number]>
 
-  private qiWalletSyncInfo!: Dexie.Table<QiWalletSyncInfo, string>
-
   constructor(options?: DexieOptions) {
     super("pelagus/chain", options)
     this.version(1).stores({
@@ -103,6 +100,8 @@ export class ChainDatabase extends Dexie {
     this.version(4).stores({
       qiOutpoints:
         "&[chainID+outpoint.txhash+outpoint.index],[chainID+address+outpoint.txhash],[chainID+outpoint.lock],address,value,outpoint.txhash,outpoint.index,outpoint.denomination,outpoint.lock",
+      // Retained for Dexie schema compatibility with older installs. Qi reopen
+      // sync no longer uses persisted checkpoint state.
       qiWalletSyncInfo:
         "&[chainID+type],chainID,blockNumber,blockHash,timestamp,type,version",
     })
@@ -365,48 +364,6 @@ export class ChainDatabase extends Dexie {
     return balances
   }
 
-  async setQiLastFullScan(
-    chainID: string,
-    blockNumber: number,
-    blockHash: string,
-    version: string
-  ): Promise<void> {
-    await this.qiWalletSyncInfo.put({
-      chainID,
-      blockNumber,
-      blockHash,
-      timestamp: Date.now(),
-      type: "scan",
-      version: version,
-    })
-  }
-
-  async getQiLastFullScan(
-    chainID: string
-  ): Promise<QiWalletSyncInfo | undefined> {
-    return this.qiWalletSyncInfo.get([chainID, "scan"])
-  }
-
-  async setQiLastSync(
-    chainID: string,
-    blockNumber: number,
-    blockHash: string,
-    version: string
-  ): Promise<void> {
-    await this.qiWalletSyncInfo.put({
-      chainID,
-      blockNumber,
-      blockHash,
-      timestamp: Date.now(),
-      type: "sync",
-      version: version,
-    })
-  }
-
-  async getQiLastSync(chainID: string): Promise<QiWalletSyncInfo | undefined> {
-    return this.qiWalletSyncInfo.get([chainID, "sync"])
-  }
-
   /**
    * Add QiOutpoints to the database efficiently, even for very large datasets.
    * @param outpoints - Array of QiOutpoint objects to insert.
@@ -629,10 +586,6 @@ export class ChainDatabase extends Dexie {
 
   async clearQiOutpoints(): Promise<void> {
     await this.qiOutpoints.clear()
-  }
-
-  async clearQiWalletSyncInfo(): Promise<void> {
-    await this.qiWalletSyncInfo.clear()
   }
 }
 

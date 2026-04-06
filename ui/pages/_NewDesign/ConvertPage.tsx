@@ -2,7 +2,11 @@ import React, { useState, useRef, useEffect } from "react"
 import { useHistory } from "react-router-dom"
 import { FaTriangleExclamation, FaCircleExclamation } from "react-icons/fa6"
 
-import { selectQiWalletSyncInProgress, setShowingAccountsModal } from "@pelagus/pelagus-background/redux-slices/ui"
+import {
+  selectIsQiWalletActionBlocked,
+  selectQiWalletSyncInProgress,
+  setShowingAccountsModal,
+} from "@pelagus/pelagus-background/redux-slices/ui"
 import { parseQi, Zone } from "quais"
 import SharedGoBackPageHeader from "../../components/Shared/_newDeisgn/pageHeaders/SharedGoBackPageHeader"
 import SharedActionButtons from "../../components/Shared/_newDeisgn/actionButtons/SharedActionButtons"
@@ -18,6 +22,7 @@ const ConvertPage = () => {
   const [showSlippageWarning, setShowSlippageWarning] = useState(false)
   const scrollableContentRef = useRef<HTMLDivElement>(null)
   const qiWalletSyncInProgress = useSelector(selectQiWalletSyncInProgress)
+  const isQiWalletActionBlocked = useSelector(selectIsQiWalletActionBlocked)
 
   const { from, to, amount, expectedSlippage, maxSlippage, intervalSettings } =
     useBackgroundSelector((state) => state.convertAssets)
@@ -36,7 +41,7 @@ const ConvertPage = () => {
     if (!from || !to || !amount) return true
 
     if (isUtxoAccountTypeGuard(from)) {
-      if (qiWalletSyncInProgress) return true
+      if (qiWalletSyncInProgress || isQiWalletActionBlocked) return true
       return (
         Number(amount) < 1 ||
         !from?.balances[Zone.Cyprus1]?.assetAmount?.amount ||
@@ -51,6 +56,9 @@ const ConvertPage = () => {
       Number(quaiBalance) < Number(amount)
     )
   }
+
+  const showQiBlockedWarning =
+    !!from && isUtxoAccountTypeGuard(from) && isQiWalletActionBlocked
 
   const handleConfirm = () => {
     if (hasSlippageWarning && !showSlippageWarning) {
@@ -88,6 +96,15 @@ const ConvertPage = () => {
         </div>
 
         <div className="scrollable-content" ref={scrollableContentRef}>
+          {showQiBlockedWarning && (
+            <div className="slippage-warning">
+              <FaCircleExclamation className="error-icon" />
+              <span>
+                Qi conversion is blocked until wallet output aggregation
+                finishes.
+              </span>
+            </div>
+          )}
           <ConvertAsset />
           {/* Add warning at the bottom of scrollable content */}
           {showSlippageWarning && hasSlippageWarning && (

@@ -197,7 +197,7 @@ export const setConvertExpectedResultHandle = createBackgroundAsyncThunk(
 export const convertAssetsHandle = createBackgroundAsyncThunk(
   "convertAssets/convertAssetsHandle",
   async (_, { getState, dispatch, extra: { main } }) => {
-    const { convertAssets } = getState() as RootState
+    const { convertAssets, ui } = getState() as RootState
 
     const { from, to, amount = "0", maxSlippage = 100 } = convertAssets
 
@@ -205,6 +205,13 @@ export const convertAssetsHandle = createBackgroundAsyncThunk(
 
     try {
       if (!isUtxoAccountTypeGuard(to)) {
+        if (ui.qiWalletAggregationRequired || ui.aggregateQiOutputsInProgress) {
+          return {
+            error: {
+              message: "Qi wallet requires reaggregation before spending.",
+            },
+          }
+        }
         await main.transactionService.convertQiToQuai(to.address, amount, maxSlippage)
       } else if (!isUtxoAccountTypeGuard(from)) {
         await main.transactionService.convertQuaiToQi(
@@ -232,11 +239,19 @@ export const convertAssetsHandle = createBackgroundAsyncThunk(
 export const wrapQiHandle = createBackgroundAsyncThunk(
   "convertAssets/wrapQiHandle",
   async (_, { getState }) => {
-    const { convertAssets } = getState() as RootState
+    const { convertAssets, ui } = getState() as RootState
     const { from, amount, to } = convertAssets
 
     if (!from || !amount || !to || !isUtxoAccountTypeGuard(from) || !isAccountTotalTypeGuard(to)) {
       return { error: { message: "Invalid conversion parameters" } }
+    }
+
+    if (ui.qiWalletAggregationRequired || ui.aggregateQiOutputsInProgress) {
+      return {
+        error: {
+          message: "Qi wallet requires reaggregation before spending.",
+        },
+      }
     }
 
     try {

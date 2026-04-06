@@ -99,27 +99,28 @@ export default class QiHDWalletManager implements IQiHDWalletManager {
     } catch (error) {
       const errorRegex = /Address (0x[a-fA-F0-9]{40}) not found in wallet/
       const match = (error as Error).message.match(errorRegex)
-      if (match) {
-        logger.info("Error locating address for outpoint. Rescanning...")
-        const removedOutpointsSerialized = {
-          ...qiHDWallet,
-          outpoints: [],
-          pendingOutpoints: [],
-        }
-        deserializedQiHDWallet = await QiHDWallet.deserialize(
-          removedOutpointsSerialized
-        )
-        deserializedQiHDWallet.connect(jsonRpcProvider)
-        await deserializedQiHDWallet.scan(Zone.Cyprus1, 0)
-        logger.info("Rescan successful. Adding to vault...")
-        await this.vaultManager.add(
-          {
-            qiHDWallet: deserializedQiHDWallet.serialize(),
-          },
-          {}
-        )
+      if (!match) {
+        throw error
       }
-      throw error
+
+      logger.info("Error locating address for outpoint. Rescanning...")
+      const removedOutpointsSerialized = {
+        ...qiHDWallet,
+        outpoints: [],
+        pendingOutpoints: [],
+      }
+      deserializedQiHDWallet = await QiHDWallet.deserialize(
+        removedOutpointsSerialized
+      )
+      deserializedQiHDWallet.connect(jsonRpcProvider)
+      await deserializedQiHDWallet.gapSync(Zone.Cyprus1, 0)
+      logger.info("Rescan successful. Adding to vault...")
+      await this.vaultManager.add(
+        {
+          qiHDWallet: deserializedQiHDWallet.serialize(),
+        },
+        {}
+      )
     }
 
     deserializedQiHDWallet.connect(webSocketProvider)
@@ -137,7 +138,7 @@ export default class QiHDWalletManager implements IQiHDWalletManager {
       async (senderPaymentCode: string, receiverPaymentCode: string) => {
         if (thisQiWalletPaymentCode === receiverPaymentCode) {
           deserializedQiHDWallet.openChannel(senderPaymentCode)
-          await deserializedQiHDWallet.sync(Zone.Cyprus1, 0)
+          await deserializedQiHDWallet.gapSync(Zone.Cyprus1, 0)
 
           await this.vaultManager.add(
             {

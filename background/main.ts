@@ -1942,17 +1942,6 @@ export default class Main extends BaseService<never> {
       existingQiCoinbaseAddresses.map((addr) => addr.address)
     )
 
-    // // Check if the wallet has been synced at least once
-    // const lastScan = await this.chainService.getQiLastFullScan(
-    //   this.selectedNetwork.chainID
-    // )
-    // const walletSynced = !!lastScan
-
-    // if (!walletSynced) {
-    //   // Need to sync the wallet at least once
-    //   await this.chainService.syncQiWallet()
-    // }
-
     // Check for a previously used coinbase address
     // const potentialCoinbaseAddress =
     //   await this.chainService.findPreviousCoinbaseAddresses(

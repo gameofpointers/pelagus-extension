@@ -11,7 +11,11 @@ import SharedButton from "../../components/Shared/SharedButton"
 import ConvertTo from "../../components/_NewDesign/ConvertAsset/ConvertTo/ConvertTo"
 import { FaTriangleExclamation } from "react-icons/fa6"
 import AccountsNotificationPanel from "../../components/AccountsNotificationPanel/AccountsNotificationPanel"
-import { selectQiWalletSyncInProgress, setShowingAccountsModal } from "@pelagus/pelagus-background/redux-slices/ui"
+import {
+  selectIsQiWalletActionBlocked,
+  selectQiWalletSyncInProgress,
+  setShowingAccountsModal,
+} from "@pelagus/pelagus-background/redux-slices/ui"
 import ConvertFrom from "../../components/_NewDesign/ConvertAsset/ConvertFrom/ConvertFrom"
 import ConvertFromAmount from "../../components/_NewDesign/ConvertAsset/ConvertFromAmount/ConvertFromAmount"
 import { useSelector } from "react-redux"
@@ -36,6 +40,7 @@ const WrapPage = () => {
   const to = useBackgroundSelector((state) => state.convertAssets.to)
   const wrappedQiDeposit = useBackgroundSelector((state) => state.convertAssets.wrappedQiDeposit)
   const qiWalletSyncInProgress = useSelector(selectQiWalletSyncInProgress)
+  const isQiWalletActionBlocked = useSelector(selectIsQiWalletActionBlocked)
   const [isClaiming, setIsClaiming] = useState(false)
   useEffect(() => {
     if (to && isAccountTotalTypeGuard(to)) {
@@ -65,6 +70,10 @@ const WrapPage = () => {
       return wqiBalance < parsedAmount
     } else {
       // For wrapping: from is Qi account, to is Quai account
+      if (isQiWalletActionBlocked) {
+        return true
+      }
+
       if (!from || !amount || !to || !isUtxoAccountTypeGuard(from)) {
         return true
       }
@@ -269,6 +278,12 @@ const WrapPage = () => {
           <div className="error">
             <FaTriangleExclamation className="error-icon" />
             {"Minimum Quai Required for Gas fees: " + MIN_QUAI_REQUIREMENT}
+          </div>
+        )}
+        {!isUnwrap && isQiWalletActionBlocked && (
+          <div className="error">
+            <FaTriangleExclamation className="error-icon" />
+            Qi wrapping is blocked until wallet output aggregation finishes.
           </div>
         )}
         {!isUnwrap && renderDepositBalance()}

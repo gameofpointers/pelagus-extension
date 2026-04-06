@@ -9,6 +9,7 @@ import {
   selectIsUtxoSelected,
   selectQiBalanceForCurrentUtxoAccountCyprus1,
 } from "@pelagus/pelagus-background/redux-slices/selectors"
+import { selectIsQiWalletActionBlocked } from "@pelagus/pelagus-background/redux-slices/ui"
 import { ReadOnlyAccountSigner } from "@pelagus/pelagus-background/services/signing"
 import { resetConvertAssetsSlice } from "@pelagus/pelagus-background/redux-slices/convertAssets"
 import { resetQiSendSlice } from "@pelagus/pelagus-background/redux-slices/qiSend"
@@ -37,6 +38,9 @@ function ActionButtons(props: ActionButtonsProps): ReactElement {
   const currentSelectedAccount = useBackgroundSelector(selectCurrentAccount)
 
   const isQiWalletInit = useBackgroundSelector(selectIsQiWalletInit)
+  const isQiWalletActionBlocked = useBackgroundSelector(
+    selectIsQiWalletActionBlocked
+  )
   const dispatch = useBackgroundDispatch()
 
   return (
@@ -62,7 +66,8 @@ function ActionButtons(props: ActionButtonsProps): ReactElement {
           iconWidth="20"
           iconHeight="26"
           disabled={
-            currentSelectedAccount.network.chainID === "9000"
+            currentSelectedAccount.network.chainID === "9000" ||
+            (isUtxoSelected && isQiWalletActionBlocked)
           }
         >
           {t("send")}
@@ -93,7 +98,7 @@ function ActionButtons(props: ActionButtonsProps): ReactElement {
             size={70}
             iconWidth="20"
             iconHeight="26"
-            disabled={!isQiWalletInit}
+            disabled={!isQiWalletInit || isQiWalletActionBlocked}
             width="100%"
             >
               {t("wrap")}
@@ -133,7 +138,8 @@ function ActionButtons(props: ActionButtonsProps): ReactElement {
           iconHeight="26"
           disabled={
             !isQiWalletInit ||
-            currentSelectedAccount.network.chainID === "9000"
+            currentSelectedAccount.network.chainID === "9000" ||
+            (isUtxoSelected && isQiWalletActionBlocked)
           }
         >
           {t("convert")}

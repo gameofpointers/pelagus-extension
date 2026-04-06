@@ -4,6 +4,7 @@
 import {
   Contract,
   JsonRpcProvider,
+  QiHDWallet,
   Shard,
   toBigInt,
   WebSocketProvider,
@@ -14,10 +15,7 @@ import {
 } from "quais"
 import { JsonRpcProvider as EthJsonRpcProvider } from "ethers"
 import { Outpoint } from "quais/lib/commonjs/transaction/utxo"
-import {
-  QiAddressInfo,
-  QiHDWallet,
-} from "quais/lib/commonjs/wallet/qi-hdwallet"
+import { QiAddressInfo } from "quais/lib/commonjs/wallet/qi-hdwallet"
 
 import { PELAGUS_NETWORKS } from "../../constants/networks/networks"
 import ProviderFactory from "../provider-factory/provider-factory"
@@ -50,7 +48,13 @@ import { MAILBOX_INTERFACE } from "../../contracts/payment-channel-mailbox"
 import NotificationsManager from "../notifications"
 import { bigIntToDecimal } from "../../redux-slices/utils/asset-utils"
 import { AddressCategory } from "./types"
-import { setQiWalletSyncInProgress } from "../../redux-slices/ui"
+import {
+  setQiWalletAggregationError,
+  setQiWalletAggregationRequired,
+  setQiWalletSyncInProgress,
+  setQiWalletSyncStatus,
+  setSpendableQiOutpointCount,
+} from "../../redux-slices/ui"
 
 // The number of blocks to query at a time for historic asset transfers.
 // Unfortunately there's no "right" answer here that works well across different
@@ -70,6 +74,7 @@ const BLOCKS_TO_SKIP_FOR_TRANSACTION_HISTORY = 20
 const NETWORK_POLLING_TIMEOUT = MINUTE * 2.05
 
 const currentVersion = "45" // Update this when wallet version changes
+const MAX_SPENDABLE_QI_OUTPOINTS = 5000
 
 interface Events extends ServiceLifecycleEvents {
   newAccountToTrack: {
@@ -136,6 +141,8 @@ export default class ChainService extends BaseService<Events> {
   private activeSubscriptions: Map<string, string[]> = new Map()
 
   private qiWalletSyncInProgress: boolean = false
+
+  private qiWalletSyncPromise: Promise<void> | null = null
 
   subscribedAccounts: {
     account: string
@@ -586,69 +593,91 @@ export default class ChainService extends BaseService<Events> {
     await this.db.removeQiOutpoints(qiOutpoints)
   }
 
-  async syncQiWallet(forceFullScan_ = false): Promise<void> {
-    if (this.qiWalletSyncInProgress) {
-      // A sync is already in progress. Silently return.
+  private isFreshQiWalletState(qiWallet: QiHDWallet): boolean {
+    const addresses = qiWallet.getAddressesForZone(Zone.Cyprus1)
+    if (addresses.length === 0) return true
+
+    return addresses.every((addressInfo) => addressInfo.lastSyncedBlock === null)
+  }
+
+  private async rebuildPersistedQiOutpoints(qiWallet: QiHDWallet): Promise<void> {
+    await this.db.clearQiOutpoints()
+
+    const qiOutpoints = qiWallet.getOutpoints(Zone.Cyprus1).map((outpointInfo) => ({
+      outpoint: outpointInfo.outpoint,
+      address: outpointInfo.address,
+      chainID: this.selectedNetwork.chainID,
+      value: denominations[outpointInfo.outpoint.denomination],
+      derivationPath: outpointInfo.derivationPath,
+    }))
+
+    if (qiOutpoints.length > 0) {
+      await this.db.addQiOutpoints(qiOutpoints)
+    }
+  }
+
+  private async updateQiAggregationState(
+    qiWallet: QiHDWallet,
+    currentBlockNumber: number,
+    syncStatus: "fresh_resync" | "gap_sync"
+  ): Promise<void> {
+    const spendableOutpointCount = qiWallet
+      .getOutpoints(Zone.Cyprus1)
+      .filter(
+        (utxo) =>
+          utxo.outpoint.lock === 0 ||
+          currentBlockNumber >= (utxo.outpoint.lock ?? 0)
+      ).length
+
+    main.store.dispatch(setSpendableQiOutpointCount(spendableOutpointCount))
+
+    if (spendableOutpointCount > MAX_SPENDABLE_QI_OUTPOINTS) {
+      main.store.dispatch(setQiWalletAggregationRequired(true))
+      main.store.dispatch(setQiWalletAggregationError(null))
+      main.store.dispatch(setQiWalletSyncStatus("blocked_for_aggregation"))
       return
     }
 
-    this.qiWalletSyncInProgress = true
-    main.store.dispatch(setQiWalletSyncInProgress(true))
+    main.store.dispatch(setQiWalletAggregationRequired(false))
+    main.store.dispatch(setQiWalletAggregationError(null))
+    main.store.dispatch(setQiWalletSyncStatus(syncStatus))
+  }
 
-    setTimeout(async () => {
-      let start = Date.now()
+  async syncQiWallet(forceFullScan_ = false): Promise<void> {
+    if (this.qiWalletSyncPromise) {
+      return this.qiWalletSyncPromise
+    }
+
+    this.qiWalletSyncPromise = (async () => {
+      this.qiWalletSyncInProgress = true
+      main.store.dispatch(setQiWalletSyncInProgress(true))
+
+      const start = Date.now()
       try {
         const network = this.selectedNetwork
-
-        let stepStart = Date.now()
-        const [lastScan, lastSync] = await Promise.all([
-          this.db.getQiLastFullScan(network.chainID),
-          this.db.getQiLastSync(network.chainID),
-        ])
-
-        // Force full scan if:
-        // 1. No previous scan exists
-        // 2. Version mismatch
-        // 3. Explicitly requested
-        // 4. More than 1 hour since last successful scan or sync
-        const ONE_HOUR_MS = 60 * 60 * 1000
-        const now = Date.now()
-        const lastSyncTimestamp = Math.max(lastScan?.timestamp || 0, lastSync?.timestamp || 0)
-        const timeSinceLastSync = now - lastSyncTimestamp
-        const isStale = lastSyncTimestamp > 0 && timeSinceLastSync > ONE_HOUR_MS
-
-        const forceFullScan = !lastScan || lastScan.version !== currentVersion || forceFullScan_ || isStale
-        console.log(`[syncQiWallet] forceFullScan=${forceFullScan}, lastScan=${lastScan?.version}, currentVersion=${currentVersion}, timeSinceLastSync=${(timeSinceLastSync / 1000 / 60).toFixed(1)}min, isStale=${isStale}`)
-
-        if (forceFullScan) {
-          // Clear outpoints and sync info for fresh scan
-          stepStart = Date.now()
-          await this.db.clearQiOutpoints()
-          await this.db.clearQiWalletSyncInfo()
-        }
-
-        stepStart = Date.now()
         const qiWallet = await this.keyringService.getQiHDWallet()
 
         if (!qiWallet) {
-          // it's possible that the wallet does not exist (quai private key was imported)
-          // or the wallet has not been initialized yet after wallet creation/restoration
-          return Promise.resolve()
+          main.store.dispatch(setSpendableQiOutpointCount(0))
+          main.store.dispatch(setQiWalletAggregationRequired(false))
+          main.store.dispatch(setQiWalletAggregationError(null))
+          main.store.dispatch(setQiWalletSyncStatus("idle"))
+          return
         }
+
+        const isFreshState = this.isFreshQiWalletState(qiWallet)
+        const syncStatus = forceFullScan_ || isFreshState ? "fresh_resync" : "gap_sync"
+        main.store.dispatch(setQiWalletSyncStatus(syncStatus))
 
         const paymentCode = qiWallet.getPaymentCode(0)
         let notifications: string[] = []
         try {
-          stepStart = Date.now()
           const mailboxContract = new Contract(
             MAILBOX_CONTRACT_ADDRESS || "",
             MAILBOX_INTERFACE,
             this.jsonRpcProvider
           )
-          const notificationsValue = await mailboxContract.getNotifications(
-            paymentCode
-          )
-          notifications = notificationsValue
+          notifications = await mailboxContract.getNotifications(paymentCode)
         } catch (error: any) {
           logger.error(
             `Error getting notifications. Make sure mailbox contract is deployed on the same network as the wallet. Error: ${
@@ -657,71 +686,39 @@ export default class ChainService extends BaseService<Events> {
           )
         }
 
-        qiWallet.connect(this.jsonRpcProvider)
-        notifications.forEach((paymentCode) => {
-          // if the channel is already open, it will be ignored
-          qiWallet.openChannel(paymentCode)
+        let syncedQiWallet = qiWallet
+        syncedQiWallet.connect(
+          forceFullScan_ || isFreshState
+            ? this.immediateJsonRpcProvider
+            : this.jsonRpcProvider
+        )
+        notifications.forEach((senderPaymentCode) => {
+          syncedQiWallet.openChannel(senderPaymentCode)
         })
 
-        stepStart = Date.now()
+        if (forceFullScan_ || isFreshState) {
+          await syncedQiWallet.scan(Zone.Cyprus1, 0)
+          main.store.dispatch(setQiWalletAggregationError(null))
+        } else {
+          await syncedQiWallet.gapSync(Zone.Cyprus1, 0)
+        }
+
+        syncedQiWallet.connect(this.jsonRpcProvider)
+
         const currentBlock = await this.jsonRpcProvider.getBlock(
           Shard.Cyprus1,
           "latest"
         )
+        const currentBlockNumber = currentBlock?.woHeader.number ?? 0
 
-        let storeOutpoints = false
-        let spendableBalance = 0n
-        let lockedBalance = 0n
-
-        if (forceFullScan) {
-          // use immediateJsonRpcProvider to avoid race condition
-          qiWallet.connect(this.immediateJsonRpcProvider)
-
-          stepStart = Date.now()
-          await qiWallet.scan(Zone.Cyprus1, 0)
-
-          // switch back to jsonRpcProvider
-          qiWallet.connect(this.jsonRpcProvider)
-          storeOutpoints = true
-
-          // calculate spendable balance for the current block using in memory outpoints
-          stepStart = Date.now()
-          spendableBalance = await qiWallet.getSpendableBalance(
+        const [spendableBalance, lockedBalance] = await Promise.all([
+          syncedQiWallet.getSpendableBalance(
             Zone.Cyprus1,
-            currentBlock?.woHeader.number,
+            currentBlockNumber,
             true
-          )
-          lockedBalance = await qiWallet.getLockedBalance(
-            Zone.Cyprus1,
-            currentBlock?.woHeader.number,
-            true
-          )
-        } else {
-          stepStart = Date.now()
-          await qiWallet.sync(
-            Zone.Cyprus1,
-            0,
-            this.handleOutpointsCreated.bind(this),
-            this.handleOutpointsDeleted.bind(this)
-          )
-
-          // fetch spendable balance for the current block using getBalance RPC
-          stepStart = Date.now()
-          const [sBalance, lBalance] = await Promise.all([
-            qiWallet.getSpendableBalance(
-              Zone.Cyprus1,
-              currentBlock?.woHeader.number,
-              false
-            ),
-            qiWallet.getLockedBalance(
-              Zone.Cyprus1,
-              currentBlock?.woHeader.number,
-              false
-            ),
-          ])
-          spendableBalance = sBalance
-          lockedBalance = lBalance
-        }
+          ),
+          syncedQiWallet.getLockedBalance(Zone.Cyprus1, currentBlockNumber, true),
+        ])
 
         const qiWalletBalance: QiWalletBalance = {
           paymentCode,
@@ -737,6 +734,7 @@ export default class ChainService extends BaseService<Events> {
           dataSource: "local",
           retrievedAt: Date.now(),
         }
+
         this.emitter.emit("updatedQiLedgerBalance", {
           balances: [qiWalletBalance],
           addressOnNetwork: {
@@ -744,55 +742,43 @@ export default class ChainService extends BaseService<Events> {
             network,
           },
         })
+
         await Promise.all([
-          this.subscribeToQiAddresses(qiWallet),
+          this.subscribeToQiAddresses(syncedQiWallet),
           this.db.addQiLedgerBalance(qiWalletBalance),
-          new Promise<void>(async (resolve): Promise<void> => {
-            if (storeOutpoints) {
-              const outpoints = qiWallet.getOutpoints(Zone.Cyprus1)
-              const qiOutpoints = outpoints.map((outpointInfo) => ({
-                outpoint: outpointInfo.outpoint,
-                address: outpointInfo.address,
-                chainID: network.chainID,
-                value: denominations[outpointInfo.outpoint.denomination],
-                derivationPath: outpointInfo.derivationPath,
-              }))
-              await this.db.addQiOutpoints(qiOutpoints)
-            }
-            resolve()
-          }),
-          new Promise<void>(async (resolve): Promise<void> => {
-            if (forceFullScan) {
-              await this.db.setQiLastFullScan(
-                this.selectedNetwork.chainID,
-                currentBlock?.woHeader.number!,
-                currentBlock?.hash!,
-                currentVersion
-              )
-            } else {
-              await this.db.setQiLastSync(
-                this.selectedNetwork.chainID,
-                currentBlock?.woHeader.number!,
-                currentBlock?.hash!,
-                currentVersion
-              )
-            }
-            resolve()
-          }),
+          this.rebuildPersistedQiOutpoints(syncedQiWallet),
+          this.updateQiAggregationState(
+            syncedQiWallet,
+            currentBlockNumber,
+            syncStatus
+          ),
         ])
 
-        // save the wallet to the vault
-        const serializedQiWallet = { qiHDWallet: qiWallet.serialize() }
-        await this.keyringService.vaultManager.add(serializedQiWallet, {})
-        console.log("Completed syncQiWallet. Balance: ", spendableBalance, "Took ", (Date.now() - start) / 1000, "seconds", "ForceFullScan: ", forceFullScan)
+        await this.keyringService.vaultManager.add(
+          { qiHDWallet: syncedQiWallet.serialize() },
+          {}
+        )
+        console.log(
+          "Completed syncQiWallet. Balance: ",
+          spendableBalance,
+          "Took ",
+          (Date.now() - start) / 1000,
+          "seconds",
+          "SyncStatus: ",
+          syncStatus
+        )
       } catch (error: any) {
+        main.store.dispatch(setQiWalletAggregationError(error?.message || String(error)))
         logger.error("Error occurred during Qi wallet sync", error.message)
+        throw error
       } finally {
-        // Reset the flag regardless of success or failure
         this.qiWalletSyncInProgress = false
+        this.qiWalletSyncPromise = null
         main.store.dispatch(setQiWalletSyncInProgress(false))
       }
-    }, 0)
+    })()
+
+    return this.qiWalletSyncPromise
   }
 
   async getOutpointsForQiAddress(address: string): Promise<Outpoint[]> {

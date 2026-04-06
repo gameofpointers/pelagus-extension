@@ -63,6 +63,31 @@ export default class TransactionService extends BaseService<TransactionServiceEv
   public readonly MAILBOX_CONTRACT_ADDRESS = MAILBOX_CONTRACT_ADDRESS || ""
   private intervalConversions: Map<string, NodeJS.Timeout> = new Map()
 
+  private isMissingQiOutpointError(error: unknown): boolean {
+    const message =
+      typeof error === "string"
+        ? error
+        : error instanceof Error
+          ? error.message
+          : String(error)
+
+    return (
+      message.includes("non-existent UTXO") ||
+      message.includes("stale outpoint") ||
+      message.includes("outpoint is not available") ||
+      message.includes("outpoint not available")
+    )
+  }
+
+  private async refreshQiWalletAfterOutpointFailure() {
+    await this.chainService.syncQiWallet()
+
+    const { jsonRpcProvider } = this.chainService
+    const refreshedQiWallet = await this.keyringService.getQiHDWallet()
+    refreshedQiWallet.connect(jsonRpcProvider)
+    return refreshedQiWallet
+  }
+
   static create: ServiceCreatorFunction<
     TransactionServiceEvents,
     TransactionService,
@@ -201,6 +226,7 @@ export default class TransactionService extends BaseService<TransactionServiceEv
       const maxAttempts = 3
       let attempts = 0
       let bufferPercentage = 10
+      let hasResyncedForOutpoints = false
       let transaction: QiTransactionDB | null = null
       while (attempts < maxAttempts) {
         try {
@@ -252,33 +278,12 @@ export default class TransactionService extends BaseService<TransactionServiceEv
             error.message.includes("Insufficient funds")
           ) {
             bufferPercentage += 10
-          } else if (error instanceof Error && error.message.includes("non-existent UTXO")) {
-            // Parse the error message to get the outpoint hash and index
-            const match = error.message.match(/non-existent UTXO ([0-9a-fA-F]+):(\d+)/)
-            if (match) {
-              const outpointHash = match[1]
-              const outpointIndex = parseInt(match[2], 10)
-              
-              // Remove the non-existent outpoint from the database
-              const chainID = this.chainService.selectedNetwork.chainID
-              const nonExistentOutpoint = {
-                chainID,
-                outpoint: {
-                  txhash: outpointHash,
-                  index: outpointIndex,
-                  denomination: 0, // This doesn't matter for deletion
-                  lock: 0 // This doesn't matter for deletion
-                },
-                value: BigInt(0), // This doesn't matter for deletion
-                address: "", // This doesn't matter for deletion
-                derivationPath: "" // This doesn't matter for deletion
-              }
-              await this.chainService.removeQiOutpoints([nonExistentOutpoint])
-              logger.info(`Removed non-existent outpoint from database: ${outpointHash}:${outpointIndex}`)
-            }
-            // Continue to next attempt with fresh outpoints after removal
-            qiWallet = await this.keyringService.getQiHDWallet()
-            qiWallet.connect(jsonRpcProvider)
+          } else if (
+            this.isMissingQiOutpointError(error) &&
+            !hasResyncedForOutpoints
+          ) {
+            hasResyncedForOutpoints = true
+            qiWallet = await this.refreshQiWalletAfterOutpointFailure()
           } else {
             await this.chainService.syncQiWallet()
             qiWallet = await this.keyringService.getQiHDWallet()
@@ -488,9 +493,7 @@ export default class TransactionService extends BaseService<TransactionServiceEv
     } catch (error: any) {
       console.log("error saving Qi aggregation transaction", error)
     }
-    setTimeout(async () => {
-      await this.chainService.syncQiWallet()
-    }, 3000)
+    await this.chainService.syncQiWallet()
     return tx.hash
   }
 
@@ -569,6 +572,7 @@ export default class TransactionService extends BaseService<TransactionServiceEv
       const maxAttempts = 3
       let attempts = 0
       let bufferPercentage = 10
+      let hasResyncedForOutpoints = false
       while (attempts < maxAttempts) {
         try {
           const qiOutpoints = await this.chainService.getOutpointsForSending(
@@ -602,30 +606,12 @@ export default class TransactionService extends BaseService<TransactionServiceEv
           error.message.includes("Insufficient funds")
         ) {
           bufferPercentage += 10
-        } else if (error instanceof Error && error.message.includes("non-existent UTXO")) {
-          // Parse the error message to get the outpoint hash and index
-          const match = error.message.match(/non-existent UTXO ([0-9a-fA-F]+):(\d+)/)
-          if (match) {
-            const outpointHash = match[1]
-            const outpointIndex = parseInt(match[2], 10)
-            
-            // Remove the non-existent outpoint from the database
-            const chainID = this.chainService.selectedNetwork.chainID
-            const nonExistentOutpoint = {
-              chainID,
-              outpoint: {
-                txhash: outpointHash,
-                index: outpointIndex,
-                denomination: 0, // This doesn't matter for deletion
-                lock: 0 // This doesn't matter for deletion
-              },
-              value: BigInt(0), // This doesn't matter for deletion
-              address: "", // This doesn't matter for deletion
-              derivationPath: "" // This doesn't matter for deletion
-            }
-            await this.chainService.removeQiOutpoints([nonExistentOutpoint])
-            logger.info(`Removed non-existent outpoint from database: ${outpointHash}:${outpointIndex}`)
-          }
+        } else if (
+          this.isMissingQiOutpointError(error) &&
+          !hasResyncedForOutpoints
+        ) {
+          hasResyncedForOutpoints = true
+          qiWallet = await this.refreshQiWalletAfterOutpointFailure()
         } else {
           await this.chainService.syncQiWallet()
           qiWallet = await this.keyringService.getQiHDWallet()
@@ -971,6 +957,7 @@ export default class TransactionService extends BaseService<TransactionServiceEv
       const maxAttempts = 3
       let attempts = 0
       let bufferPercentage = 10
+      let hasResyncedForOutpoints = false
       while (attempts < maxAttempts) {
         try {
           const qiOutpoints = await this.chainService.getOutpointsForSending(
@@ -1027,33 +1014,12 @@ export default class TransactionService extends BaseService<TransactionServiceEv
             error.message.includes("Insufficient funds")
           ) {
             bufferPercentage += 10
-          } else if (error instanceof Error && error.message.includes("non-existent UTXO")) {
-            // Parse the error message to get the outpoint hash and index
-            const match = error.message.match(/non-existent UTXO ([0-9a-fA-F]+):(\d+)/)
-            if (match) {
-              const outpointHash = match[1]
-              const outpointIndex = parseInt(match[2], 10)
-              
-              // Remove the non-existent outpoint from the database
-              const chainID = this.chainService.selectedNetwork.chainID
-              const nonExistentOutpoint = {
-                chainID,
-                outpoint: {
-                  txhash: outpointHash,
-                  index: outpointIndex,
-                  denomination: 0, // This doesn't matter for deletion
-                  lock: 0 // This doesn't matter for deletion
-                },
-                value: BigInt(0), // This doesn't matter for deletion
-                address: "", // This doesn't matter for deletion
-                derivationPath: "" // This doesn't matter for deletion
-              }
-              await this.chainService.removeQiOutpoints([nonExistentOutpoint])
-              logger.info(`Removed non-existent outpoint from database: ${outpointHash}:${outpointIndex}`)
-            }
-            // Continue to next attempt with fresh outpoints after removal
-            qiWallet = await this.keyringService.getQiHDWallet()
-            qiWallet.connect(jsonRpcProvider)
+          } else if (
+            this.isMissingQiOutpointError(error) &&
+            !hasResyncedForOutpoints
+          ) {
+            hasResyncedForOutpoints = true
+            qiWallet = await this.refreshQiWalletAfterOutpointFailure()
           } else {
             await this.chainService.syncQiWallet()
             qiWallet = await this.keyringService.getQiHDWallet()
@@ -1127,12 +1093,15 @@ export default class TransactionService extends BaseService<TransactionServiceEv
   public async checkReceivedQiTransactions(): Promise<void> {
     const { jsonRpcProvider } = this.chainService
 
+    await this.chainService.syncQiWallet()
+
     const [qiWallet, dbTransactions] = await Promise.all([
       this.keyringService.getQiHDWallet(),
       this.db.getAllQiTransactions(),
     ])
+    if (!qiWallet) return
+
     qiWallet.connect(jsonRpcProvider)
-    await qiWallet.sync(Zone.Cyprus1, 0)
 
     const blockTimestampCache = new Map<string, number>()
     const outpoints = qiWallet.getOutpoints(Zone.Cyprus1)

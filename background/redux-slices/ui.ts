@@ -38,6 +38,14 @@ export const defaultSettings = {
 
 const defaultSnackbarDuration = 2500
 
+export type QiWalletSyncStatus =
+  | "idle"
+  | "fresh_resync"
+  | "gap_sync"
+  | "blocked_for_aggregation"
+  | "aggregating"
+  | "aggregation_failed"
+
 export type UIState = {
   isUtxoSelected: boolean
   selectedUtxoAccount: UtxoAccountData | null
@@ -82,6 +90,10 @@ export type UIState = {
     step: string
     detail?: string
   }
+  qiWalletSyncStatus: QiWalletSyncStatus
+  spendableQiOutpointCount: number
+  qiWalletAggregationRequired: boolean
+  qiWalletAggregationError: string | null
   lastUserActivityOnAddress: { [address: string]: number }
   lastUserActivityOnNetwork: { [chainID: string]: number }
 }
@@ -144,6 +156,10 @@ export const initialState: UIState = {
     step: "",
     detail: ""
   },
+  qiWalletSyncStatus: "idle",
+  spendableQiOutpointCount: 0,
+  qiWalletAggregationRequired: false,
+  qiWalletAggregationError: null,
   lastUserActivityOnAddress: {},
   lastUserActivityOnNetwork: Object.fromEntries(
     PELAGUS_NETWORKS.map((network: NetworkInterface) => [network.chainID, 0])
@@ -406,6 +422,30 @@ const uiSlice = createSlice({
     setAggregationProgress: (immerState, { payload }: { payload: { progress: number; step: string; detail?: string } }) => {
       immerState.aggregationProgress = payload
     },
+    setQiWalletSyncStatus: (
+      immerState,
+      { payload }: { payload: QiWalletSyncStatus }
+    ) => {
+      immerState.qiWalletSyncStatus = payload
+    },
+    setSpendableQiOutpointCount: (
+      immerState,
+      { payload }: { payload: number }
+    ) => {
+      immerState.spendableQiOutpointCount = payload
+    },
+    setQiWalletAggregationRequired: (
+      immerState,
+      { payload }: { payload: boolean }
+    ) => {
+      immerState.qiWalletAggregationRequired = payload
+    },
+    setQiWalletAggregationError: (
+      immerState,
+      { payload }: { payload: string | null }
+    ) => {
+      immerState.qiWalletAggregationError = payload
+    },
     resetProgressStates: (immerState) => {
       immerState.qiWalletSyncInProgress = false
       immerState.aggregateQiOutputsInProgress = false
@@ -414,6 +454,10 @@ const uiSlice = createSlice({
         step: "",
         detail: ""
       }
+      immerState.qiWalletSyncStatus = "idle"
+      immerState.spendableQiOutpointCount = 0
+      immerState.qiWalletAggregationRequired = false
+      immerState.qiWalletAggregationError = null
     },
     updateLastUserActivityOnNetwork: (
       immerState,
@@ -456,6 +500,10 @@ export const {
   setQiWalletSyncInProgress,
   setAggregateQiOutputsInProgress,
   setAggregationProgress,
+  setQiWalletSyncStatus,
+  setSpendableQiOutpointCount,
+  setQiWalletAggregationRequired,
+  setQiWalletAggregationError,
   resetProgressStates,
   updateLastUserActivityOnNetwork,
 } = uiSlice.actions
@@ -737,6 +785,36 @@ export const selectAggregateQiOutputsInProgress = createSelector(
 export const selectAggregationProgress = createSelector(
   selectUI,
   (ui) => ui.aggregationProgress
+)
+
+export const selectQiWalletSyncStatus = createSelector(
+  selectUI,
+  (ui) => ui.qiWalletSyncStatus
+)
+
+export const selectSpendableQiOutpointCount = createSelector(
+  selectUI,
+  (ui) => ui.spendableQiOutpointCount
+)
+
+export const selectQiWalletAggregationRequired = createSelector(
+  selectUI,
+  (ui) => ui.qiWalletAggregationRequired
+)
+
+export const selectQiWalletAggregationError = createSelector(
+  selectUI,
+  (ui) => ui.qiWalletAggregationError
+)
+
+export const selectIsQiWalletActionBlocked = createSelector(
+  selectUI,
+  (ui) =>
+    ui.qiWalletAggregationRequired ||
+    ui.aggregateQiOutputsInProgress ||
+    ui.qiWalletSyncStatus === "blocked_for_aggregation" ||
+    ui.qiWalletSyncStatus === "aggregating" ||
+    ui.qiWalletSyncStatus === "aggregation_failed"
 )
 
 export const selectShowTestNetworks = createSelector(

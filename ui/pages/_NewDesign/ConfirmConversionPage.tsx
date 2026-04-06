@@ -1,16 +1,22 @@
 import React, { useState } from "react"
 import { useHistory } from "react-router-dom"
 import { convertAssetsHandle } from "@pelagus/pelagus-background/redux-slices/convertAssets"
+import { selectIsQiWalletActionBlocked } from "@pelagus/pelagus-background/redux-slices/ui"
 import SharedGoBackPageHeader from "../../components/Shared/_newDeisgn/pageHeaders/SharedGoBackPageHeader"
 import SharedActionButtons from "../../components/Shared/_newDeisgn/actionButtons/SharedActionButtons"
-import { useBackgroundDispatch } from "../../hooks"
+import { useBackgroundDispatch, useBackgroundSelector } from "../../hooks"
 import ConfirmConversion from "../../components/_NewDesign/ConfirmConversion/ConfirmConversion"
 import { useTranslation } from "react-i18next"
 import SharedConfirmationModal from "../../components/Shared/SharedConfirmationModal"
+import { isUtxoAccountTypeGuard } from "../../utils/accounts"
 
 const ConfirmConversionPage = () => {
   const history = useHistory()
   const dispatch = useBackgroundDispatch()
+  const isQiWalletActionBlocked = useBackgroundSelector(
+    selectIsQiWalletActionBlocked
+  )
+  const from = useBackgroundSelector((state) => state.convertAssets.from)
 
   const [isConfirmLoading, setIsConfirmLoading] = useState(false)
   const [isOpenConfirmationModal, setIsOpenConfirmationModal] = useState(false)
@@ -22,6 +28,13 @@ const ConfirmConversionPage = () => {
   })
 
   const handleConfirm = async () => {
+    if (from && isUtxoAccountTypeGuard(from) && isQiWalletActionBlocked) {
+      setErrorMessage("Qi wallet requires reaggregation before converting.")
+      setIsTransactionError(true)
+      setIsOpenConfirmationModal(true)
+      return
+    }
+
     setIsConfirmLoading(true)
     setIsTransactionError(false)
     setErrorMessage("")
@@ -88,6 +101,9 @@ const ConfirmConversionPage = () => {
             onConfirm: () => handleConfirm(),
             onCancel: () => history.push("-1"),
           }}
+          isConfirmDisabled={
+            !!from && isUtxoAccountTypeGuard(from) && isQiWalletActionBlocked
+          }
           isLoading={isConfirmLoading}
         />
       </main>

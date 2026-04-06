@@ -27,6 +27,7 @@ import WalletAccountBalanceControl from "../components/Wallet/WalletAccountBalan
 import WalletNoConnectionBanner from "../components/Wallet/WalletNoConnectionBanner"
 import WalletHiddenAssets from "../components/Wallet/WalletHiddenAssets"
 import WalletAlphaBanner from "../components/Wallet/WalletAlphaBanner"
+import QiReaggregationBanner from "../components/Wallet/QiReaggregationBanner"
 import SharedButton from "../components/Shared/SharedButton"
 import SharedIcon from "../components/Shared/SharedIcon"
 import UtxoActivityList from "../components/_NewDesign/Activities/UtxoActivityList/UtxoActivityList"
@@ -134,6 +135,7 @@ export default function Wallet(): ReactElement {
         {/*  )} */}
 
         <WalletNoConnectionBanner />
+        {isUtxoSelected && <QiReaggregationBanner />}
 
         <div className="section">
           <WalletAccountBalanceControl
