@@ -530,10 +530,14 @@ export default class Main extends BaseService<never> {
 
       this.balanceCheckInProgress = true
       try {
-        await Promise.all([
-          this.enrichActivitiesForSelectedAccount(),
-          this.manuallyCheckBalances(true),
-        ])
+        if (this.store.getState().ui.isUtxoSelected) {
+          await this.chainService.syncQiWallet()
+        } else {
+          await Promise.all([
+            this.enrichActivitiesForSelectedAccount(),
+            this.manuallyCheckBalances(true),
+          ])
+        }
       } finally {
         this.balanceCheckInProgress = false
       }
@@ -2094,7 +2098,11 @@ export default class Main extends BaseService<never> {
 
       logger.info("Pelagus Connected")
       walletOpen = true
-      this.manuallyCheckBalances()
+      if (this.store.getState().ui.isUtxoSelected) {
+        this.chainService.syncQiWallet()
+      } else {
+        this.manuallyCheckBalances()
+      }
 
       const openTime = Date.now()
 
