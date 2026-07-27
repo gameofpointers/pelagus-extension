@@ -311,7 +311,7 @@ export default class TransactionService extends BaseService<TransactionServiceEv
             qiWallet = await this.keyringService.getQiHDWallet()
             qiWallet.connect(jsonRpcProvider)
           } else {
-            await this.chainService.syncQiWallet()
+            await this.chainService.syncQiWallet({ ignoreRecentSync: true })
             qiWallet = await this.keyringService.getQiHDWallet()
             qiWallet.connect(jsonRpcProvider)
           }
@@ -328,11 +328,8 @@ export default class TransactionService extends BaseService<TransactionServiceEv
       }
 
       // Wait for the transaction to be included in a block
-      await Promise.all([
-        this.saveQiTransaction(transaction),
-        this.subscribeToQiTransaction(transaction.hash),
-        this.chainService.syncQiWallet(),
-      ])
+      await this.saveQiTransaction(transaction)
+      await this.subscribeToQiTransaction(transaction.hash)
 
       NotificationsManager.createSendQiTxNotification()
     } catch (error: any) {
@@ -519,9 +516,6 @@ export default class TransactionService extends BaseService<TransactionServiceEv
     } catch (error: any) {
       console.log("error saving Qi aggregation transaction", error)
     }
-    setTimeout(async () => {
-      await this.chainService.syncQiWallet()
-    }, 3000)
     return tx.hash
   }
 
@@ -658,7 +652,7 @@ export default class TransactionService extends BaseService<TransactionServiceEv
             logger.info(`Removed non-existent outpoint from database: ${outpointHash}:${outpointIndex}`)
           }
         } else {
-          await this.chainService.syncQiWallet()
+          await this.chainService.syncQiWallet({ ignoreRecentSync: true })
           qiWallet = await this.keyringService.getQiHDWallet()
           qiWallet.connect(jsonRpcProvider)
         }
@@ -673,10 +667,7 @@ export default class TransactionService extends BaseService<TransactionServiceEv
       }
     }
     await this.saveQiTransaction(transaction)
-    await Promise.all([
-      this.subscribeToQiTransaction(transaction.hash),
-      this.chainService.syncQiWallet(),
-    ])
+    await this.subscribeToQiTransaction(transaction.hash)
     return transaction.hash
   }
 
@@ -1094,7 +1085,7 @@ export default class TransactionService extends BaseService<TransactionServiceEv
             qiWallet = await this.keyringService.getQiHDWallet()
             qiWallet.connect(jsonRpcProvider)
           } else {
-            await this.chainService.syncQiWallet()
+            await this.chainService.syncQiWallet({ ignoreRecentSync: true })
             qiWallet = await this.keyringService.getQiHDWallet()
             qiWallet.connect(jsonRpcProvider)
           }
@@ -1108,12 +1099,11 @@ export default class TransactionService extends BaseService<TransactionServiceEv
         throw new Error(detailedError)
       }
       await this.saveQiTransaction(transaction)
-      await Promise.all([
-        txRefundAddress
-          ? this.monitorConversion(transaction.hash, txRefundAddress, to)
-          : this.subscribeToQiTransaction(transaction.hash),
-        this.chainService.syncQiWallet(),
-      ])
+      if (txRefundAddress) {
+        await this.monitorConversion(transaction.hash, txRefundAddress, to)
+      } else {
+        await this.subscribeToQiTransaction(transaction.hash)
+      }
     } catch (error: any) {
       logger.error("Failed to convert Qi to Quai", error.message)
       NotificationsManager.createFailedQiTxNotification()
@@ -1472,7 +1462,7 @@ export default class TransactionService extends BaseService<TransactionServiceEv
     }
 
     // Scan will naturally mark unfunded addresses as UNUSED
-    this.chainService.syncQiWallet()
+    await this.chainService.syncQiWallet({ ignoreRecentSync: true })
     NotificationsManager.createFailedQiTxNotification()
   }
 
@@ -1586,6 +1576,8 @@ export default class TransactionService extends BaseService<TransactionServiceEv
         logger.error(`Failed to mark refund address as UNUSED:`, error)
       }
     }
+
+    await this.chainService.syncQiWallet({ ignoreRecentSync: true })
   }
 
   /**
@@ -1606,7 +1598,7 @@ export default class TransactionService extends BaseService<TransactionServiceEv
     NotificationsManager.createRevertedConversionNotification()
 
     // Sync wallet to pick up the refunded outpoints
-    this.chainService.syncQiWallet()
+    await this.chainService.syncQiWallet({ ignoreRecentSync: true })
   }
 
   /**
@@ -1658,6 +1650,7 @@ export default class TransactionService extends BaseService<TransactionServiceEv
     transaction.blockNumber = blockNumber
 
     await this.updateQiTransaction(transaction)
+    await this.chainService.syncQiWallet({ ignoreRecentSync: true })
   }
 
   /**
