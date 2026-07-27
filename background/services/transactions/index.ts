@@ -1407,10 +1407,10 @@ export default class TransactionService extends BaseService<TransactionServiceEv
    * @param {string} hash - The hash of the transaction to subscribe to.
    */
   private async subscribeToQuaiTransaction(hash: string): Promise<void> {
-    const { jsonRpcProvider } = this.chainService
+    const { webSocketProvider } = this.chainService
 
     try {
-      const receipt = await jsonRpcProvider.waitForTransaction(
+      const receipt = await webSocketProvider.waitForTransaction(
         hash,
         TRANSACTION_CONFIRMATIONS,
         TRANSACTION_RECEIPT_WAIT_TIMEOUT
