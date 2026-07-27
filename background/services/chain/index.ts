@@ -69,6 +69,11 @@ const NETWORK_POLLING_TIMEOUT = MINUTE * 2.05
 
 const currentVersion = "45" // Update this when wallet version changes
 
+interface QiWalletSyncOptions {
+  forceFullScan?: boolean
+  ignoreRecentSync?: boolean
+}
+
 interface Events extends ServiceLifecycleEvents {
   newAccountToTrack: {
     addressOnNetwork: AddressOnNetwork
@@ -134,6 +139,10 @@ export default class ChainService extends BaseService<Events> {
   private activeSubscriptions: Map<string, Set<string>> = new Map()
 
   private qiWalletSyncInProgress: boolean = false
+
+  private qiWalletSyncPromise: Promise<void> | null = null
+
+  private qiWalletSyncOptions: QiWalletSyncOptions | null = null
 
   private baseBalanceRequests: Map<string, Promise<AccountBalance>> = new Map()
 
@@ -577,17 +586,44 @@ export default class ChainService extends BaseService<Events> {
     await this.db.removeQiOutpoints(qiOutpoints)
   }
 
-  async syncQiWallet(forceFullScan_ = false): Promise<void> {
+  syncQiWallet({
+    forceFullScan: forceFullScan_ = false,
+    ignoreRecentSync = false,
+  }: QiWalletSyncOptions = {}): Promise<void> {
+    if (this.qiWalletSyncPromise) {
+      const activeSyncSatisfiesRequest =
+        (!forceFullScan_ || this.qiWalletSyncOptions?.forceFullScan) &&
+        (!ignoreRecentSync ||
+          this.qiWalletSyncOptions?.ignoreRecentSync ||
+          this.qiWalletSyncOptions?.forceFullScan)
+
+      // Ordinary callers join the active scan. A terminal transaction refresh
+      // queues one follow-up only when the active scan may have started before
+      // the transaction reached its terminal state.
+      return this.qiWalletSyncPromise.then(() =>
+        activeSyncSatisfiesRequest
+          ? undefined
+          : this.syncQiWallet({
+              forceFullScan: forceFullScan_,
+              ignoreRecentSync,
+            })
+      )
+    }
+
     if (this.qiWalletSyncInProgress) {
-      // A sync is already in progress. Silently return.
-      return
+      // A deep scan is already in progress.
+      return Promise.resolve()
     }
 
     this.qiWalletSyncInProgress = true
+    this.qiWalletSyncOptions = {
+      forceFullScan: forceFullScan_,
+      ignoreRecentSync,
+    }
     main.store.dispatch(setQiWalletSyncInProgress(true))
 
-    setTimeout(async () => {
-      let start = Date.now()
+    const syncPromise = (async () => {
+      const start = Date.now()
       try {
         const network = this.selectedNetwork
 
@@ -604,11 +640,32 @@ export default class ChainService extends BaseService<Events> {
         // 4. More than 1 hour since last successful scan or sync
         const ONE_HOUR_MS = 60 * 60 * 1000
         const now = Date.now()
-        const lastSyncTimestamp = Math.max(lastScan?.timestamp || 0, lastSync?.timestamp || 0)
+        const lastSyncTimestamp = Math.max(
+          lastScan?.timestamp || 0,
+          lastSync?.timestamp || 0
+        )
         const timeSinceLastSync = now - lastSyncTimestamp
         const isStale = lastSyncTimestamp > 0 && timeSinceLastSync > ONE_HOUR_MS
 
-        const forceFullScan = !lastScan || lastScan.version !== currentVersion || forceFullScan_ || isStale
+        if (
+          !forceFullScan_ &&
+          !ignoreRecentSync &&
+          lastSyncTimestamp > 0 &&
+          timeSinceLastSync < MINUTE
+        ) {
+          logger.debug(
+            `[syncQiWallet] Skipping sync completed ${(
+              timeSinceLastSync / 1000
+            ).toFixed(1)}s ago`
+          )
+          return
+        }
+
+        const forceFullScan =
+          !lastScan ||
+          lastScan.version !== currentVersion ||
+          forceFullScan_ ||
+          isStale
         console.log(`[syncQiWallet] forceFullScan=${forceFullScan}, lastScan=${lastScan?.version}, currentVersion=${currentVersion}, timeSinceLastSync=${(timeSinceLastSync / 1000 / 60).toFixed(1)}min, isStale=${isStale}`)
 
         if (forceFullScan) {
@@ -624,7 +681,7 @@ export default class ChainService extends BaseService<Events> {
         if (!qiWallet) {
           // it's possible that the wallet does not exist (quai private key was imported)
           // or the wallet has not been initialized yet after wallet creation/restoration
-          return Promise.resolve()
+          return
         }
 
         const paymentCode = qiWallet.getPaymentCode(0)
@@ -778,12 +835,19 @@ export default class ChainService extends BaseService<Events> {
         console.log("Completed syncQiWallet. Balance: ", spendableBalance, "Took ", (Date.now() - start) / 1000, "seconds", "ForceFullScan: ", forceFullScan)
       } catch (error: any) {
         logger.error("Error occurred during Qi wallet sync", error.message)
-      } finally {
-        // Reset the flag regardless of success or failure
+      }
+    })()
+
+    const trackedSyncPromise = syncPromise.finally(() => {
+      if (this.qiWalletSyncPromise === trackedSyncPromise) {
+        this.qiWalletSyncPromise = null
+        this.qiWalletSyncOptions = null
         this.qiWalletSyncInProgress = false
         main.store.dispatch(setQiWalletSyncInProgress(false))
       }
-    }, 0)
+    })
+    this.qiWalletSyncPromise = trackedSyncPromise
+    return trackedSyncPromise
   }
 
   async deepScanQiWallet(extraAddresses: number = 100): Promise<void> {
