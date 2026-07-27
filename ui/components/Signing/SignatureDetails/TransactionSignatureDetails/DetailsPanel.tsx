@@ -63,8 +63,14 @@ export default function DetailPanel({
     setTransactionDetails(transactionRequest)
     dispatch(updateTransactionData(transactionRequest))
     const fetchABI = async () => {
-      if (transactionRequest?.to) {
-        const fetchedAbi = await dispatch(getABIFromAddress({ address: transactionRequest.to }))
+      if (
+        transactionRequest?.to &&
+        transactionRequest.data &&
+        transactionRequest.data !== "0x"
+      ) {
+        const fetchedAbi = await dispatch(
+          getABIFromAddress({ address: transactionRequest.to })
+        )
         setABI(Interface.from(fetchedAbi as any))
       }
     }
