@@ -105,26 +105,29 @@ export default class ProviderFactory extends BaseService<ProviderFactoryEvents> 
         customWebSocketRpcUrls
       )
 
+      const networkChainId = BigInt(chainID)
       const jsonRpcProvider = new JsonRpcProvider(
         customJsonRpcUrls,
-        undefined,
+        networkChainId,
         {
           usePathing: usePathingJsonRpc,
+          staticNetwork: true,
         }
       )
 
       // Add provider than does not batch requests (useful when dealing with potentially large responses)
       const immediateJsonRpcProvider = new JsonRpcProvider(
         customJsonRpcUrls,
-        undefined,
+        networkChainId,
         {
           usePathing: usePathingJsonRpc,
           batchMaxCount: 1,
+          staticNetwork: true,
         }
       )
       const webSocketProvider = new WebSocketProvider(
         customWebSocketRpcUrls,
-        undefined,
+        networkChainId,
         {
           usePathing: usePathingWebSocketRpc,
         }
@@ -231,13 +234,15 @@ export default class ProviderFactory extends BaseService<ProviderFactoryEvents> 
       const { chainID, jsonRpcUrls, webSocketRpcUrls } = QuaiLocalNodeNetwork
 
       const existingProviders = this.providersForNetworks.get(chainID)
+      const networkChainId = BigInt(chainID)
 
-      const jsonRpcProvider = new JsonRpcProvider(jsonRpcUrls, undefined, {
+      const jsonRpcProvider = new JsonRpcProvider(jsonRpcUrls, networkChainId, {
         usePathing: false,
+        staticNetwork: true,
       })
       const webSocketProvider = new WebSocketProvider(
         webSocketRpcUrls,
-        undefined,
+        networkChainId,
         { usePathing: false }
       )
 
