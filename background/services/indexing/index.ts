@@ -160,7 +160,7 @@ export default class IndexingService extends BaseService<Events> {
     super({
       balance: {
         schedule: {
-          periodInMinutes: 1,
+          periodInMinutes: 5,
         },
         handler: () => this.handleBalanceAlarm(),
       },

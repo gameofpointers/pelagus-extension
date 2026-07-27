@@ -537,7 +537,7 @@ export default class Main extends BaseService<never> {
       } finally {
         this.balanceCheckInProgress = false
       }
-    }, MINUTE)
+    }, 5 * MINUTE)
     this.balanceChecker = interval
   }
 
