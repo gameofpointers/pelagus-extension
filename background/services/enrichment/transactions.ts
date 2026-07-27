@@ -249,12 +249,34 @@ export default async function resolveTransactionAnnotation(
 
   if (!transaction.from) throw new Error("Transaction from not found")
 
-  const {
-    assetAmount: { amount: baseAssetBalance },
-  } = await chainService.getLatestBaseAccountBalance({
+  const senderBalance = await chainService.getLatestBaseAccountBalance({
     address: transaction.from,
     network,
   })
+  const {
+    assetAmount: { amount: baseAssetBalance },
+  } = senderBalance
+
+  const addressEnrichments = new Map<
+    string,
+    Promise<EnrichedAddressOnNetwork>
+  >()
+  const enrichAddress = (address: string) => {
+    const key = address.toLowerCase()
+    const existing = addressEnrichments.get(key)
+    if (existing) return existing
+
+    const enrichment = enrichAddressOnNetwork(
+      chainService,
+      nameService,
+      { address, network },
+      sameQuaiAddress(address, transaction.from)
+        ? { balance: senderBalance, hasCode: false }
+        : undefined
+    )
+    addressEnrichments.set(key, enrichment)
+    return enrichment
+  }
 
   const { gasLimit, gasPrice, blockHash } = transaction
 
@@ -310,28 +332,14 @@ export default async function resolveTransactionAnnotation(
   // If the tx has a recipient, its a contract interaction or another tx type
   // rather than a deployment.
   if (transaction.to) {
-    const contractInfo = await enrichAddressOnNetwork(
-      chainService,
-      nameService,
-      {
-        address: transaction.to,
-        network,
-      }
-    )
+    const contractInfo = await enrichAddress(transaction.to)
 
     txAnnotation =
       txAnnotation.type === "contract-deployment"
         ? {
             ...txAnnotation,
             type: "contract-interaction",
-            contractInfo: await enrichAddressOnNetwork(
-              chainService,
-              nameService,
-              {
-                address: transaction.to,
-                network,
-              }
-            ),
+            contractInfo,
           }
         : txAnnotation
 
@@ -339,10 +347,7 @@ export default async function resolveTransactionAnnotation(
       // If the tx has no data, it's either a simple ETH send, or it's relying
       // on a contract that's `payable` to execute code
       const recipient = contractInfo
-      const sender = await enrichAddressOnNetwork(chainService, nameService, {
-        address: transaction.from,
-        network,
-      })
+      const sender = await enrichAddress(transaction.from)
 
       // This is _almost certainly_ not a contract interaction, move on. Note that
       // a simple ETH send to a contract address can still effectively be a
@@ -397,14 +402,8 @@ export default async function resolveTransactionAnnotation(
         (erc20Tx.name === "transfer" || erc20Tx.name === "transferFrom")
       ) {
         const [sender, recipient] = await Promise.all([
-          enrichAddressOnNetwork(chainService, nameService, {
-            address: erc20Tx.args.from ?? transaction.from,
-            network,
-          }),
-          enrichAddressOnNetwork(chainService, nameService, {
-            address: erc20Tx.args.to,
-            network,
-          }),
+          enrichAddress(erc20Tx.args.from ?? transaction.from),
+          enrichAddress(erc20Tx.args.to),
         ])
 
         // We have an ERC-20 transfer
@@ -443,14 +442,7 @@ export default async function resolveTransactionAnnotation(
         erc20Tx &&
         erc20Tx.name === "approve"
       ) {
-        const spender = await enrichAddressOnNetwork(
-          chainService,
-          nameService,
-          {
-            address: erc20Tx.args.spender,
-            network,
-          }
-        )
+        const spender = await enrichAddress(erc20Tx.args.spender)
         // Warn if we're approving spending to a likely EOA. Note this will also
         // sweep up CREATE2 contracts that haven't yet been deployed
         if (!spender.annotation.hasCode) {
