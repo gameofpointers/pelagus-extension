@@ -18,6 +18,8 @@ interface Events extends ServiceLifecycleEvents {
 export default class BlockService extends BaseService<Events> {
   private newHeadProvider?: WebSocketProvider
 
+  private blockRequests: Map<string, Promise<AnyEVMBlock>> = new Map()
+
   static create: ServiceCreatorFunction<
     Events,
     BlockService,
@@ -132,6 +134,27 @@ export default class BlockService extends BaseService<Events> {
   }
 
   async getBlockByHash(
+    network: NetworkInterface,
+    shard: Shard,
+    blockHash: string
+  ): Promise<AnyEVMBlock> {
+    const requestKey = `${network.chainID}:${shard}:${blockHash}`
+    const existingRequest = this.blockRequests.get(requestKey)
+    if (existingRequest) return existingRequest
+
+    const request = this.fetchBlockByHash(network, shard, blockHash)
+    this.blockRequests.set(requestKey, request)
+
+    try {
+      return await request
+    } finally {
+      if (this.blockRequests.get(requestKey) === request) {
+        this.blockRequests.delete(requestKey)
+      }
+    }
+  }
+
+  private async fetchBlockByHash(
     network: NetworkInterface,
     shard: Shard,
     blockHash: string
