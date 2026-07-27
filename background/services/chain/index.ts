@@ -334,7 +334,10 @@ export default class ChainService extends BaseService<Events> {
               )
             ).catch((error) => {
               subscribedAddresses.delete(address)
-              throw error
+              logger.warn(
+                `Failed to subscribe to balance updates for ${address} on chain ${network.chainID}`,
+                error
+              )
             })
           )
         }
